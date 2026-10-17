@@ -1,0 +1,42 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Configuração local e segredos
+.env
+.env.*
+!.env.example
+
+# Banco de dados local (protótipo SQLite)
+*.db
+*.sqlite3
+
+# Ferramentas e artefatos de teste
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Uploads/imagens locais (não devem ser versionados)
+uploads/
+data/images/
+tmp-samples/
+
+# Artefatos de modelo baixados (registry e instruções ficam em models/README.md)
+models/*
+!models/README.md
+
+# Sistema operacional / editores
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

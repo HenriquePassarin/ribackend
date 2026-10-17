@@ -1,0 +1,9 @@
+# Dependências de execução (versões fixadas, validadas em Python 3.12).
+fastapi==0.143.3
+uvicorn[standard]==0.54.0
+pydantic==2.14.1
+pydantic-settings==2.16.0
+SQLAlchemy==2.1.5
+python-multipart==0.0.32
+opencv-python==5.0.0.93
+numpy==2.5.4
