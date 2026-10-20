@@ -50,14 +50,17 @@ REGISTRY: dict[str, dict[str, object]] = {
             "VISION_PROVIDER": "opencv",
             "MODEL_INPUT_SIZE": "224",
             "MODEL_INPUT_SCALE": "0.00392156862745098",
-            "MODEL_INPUT_MEAN": "0,0,0",
-            "MODEL_SWAP_RB": "false",
+            "MODEL_INPUT_MEAN": "0.485,0.456,0.406",
+            "MODEL_INPUT_STD": "0.229,0.224,0.225",
+            "MODEL_SWAP_RB": "true",
             "MODEL_OUTPUT_SOFTMAX": "auto",
         },
         "notes": (
-            "Verificado localmente (1 imagem por classe, sem métrica de acurácia): banana -> "
-            "'banana'; maçã vermelha -> 'fig'/'Granny Smith' (o ImageNet não possui classe de "
-            "maçã vermelha). Latência medida nesta máquina: ~39 ms de média por inferência "
+            "Exige RGB com normalização ImageNet (mean/std); o trecho de .env impresso já "
+            "configura isso. Verificado localmente (1 imagem por classe, sem métrica de acurácia): "
+            "banana, limão, laranja, morango e Granny Smith classificados corretamente com "
+            "confiança alta; maçã vermelha -> 'pomegranate' (o ImageNet não possui classe de maçã "
+            "vermelha). Latência medida nesta máquina: ~39 ms de média por inferência "
             "(224x224, CPU) - não é a latência do hardware alvo."
         ),
     }

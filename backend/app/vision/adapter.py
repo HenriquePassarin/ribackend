@@ -63,6 +63,7 @@ class ModelConfig:
     input_size: int = 224
     input_scale: float = 1.0 / 255.0
     input_mean: str = "0,0,0"
+    input_std: str = "1,1,1"
     swap_rb: bool = False
     softmax_mode: str = "auto"
 
@@ -83,19 +84,24 @@ def build_opencv_recognizer(config: ModelConfig) -> FruitRecognizer:
         input_size=config.input_size,
         input_scale=config.input_scale,
         input_mean=parse_mean(config.input_mean),
+        input_std=parse_triplet(config.input_std, "MODEL_INPUT_STD"),
         swap_rb=config.swap_rb,
         softmax_mode=config.softmax_mode,
         model_version=config.version,
     )
 
 
-def parse_mean(value: str) -> tuple[float, float, float]:
+def parse_triplet(value: str, variable: str = "MODEL_INPUT_MEAN") -> tuple[float, float, float]:
     parts = [part.strip() for part in value.split(",")]
     if len(parts) != 3:
         raise ModelUnavailableError(
-            "MODEL_INPUT_MEAN deve conter três valores separados por vírgula, por exemplo: 0,0,0"
+            f"{variable} deve conter três valores separados por vírgula, por exemplo: 0,0,0"
         )
     return (float(parts[0]), float(parts[1]), float(parts[2]))
+
+
+def parse_mean(value: str) -> tuple[float, float, float]:
+    return parse_triplet(value, "MODEL_INPUT_MEAN")
 
 
 _PROVIDER_FACTORIES: dict[str, Callable[[ModelConfig], FruitRecognizer]] = {
@@ -112,6 +118,7 @@ def model_config_from_settings(settings: Settings) -> ModelConfig:
         input_size=settings.model_input_size,
         input_scale=settings.model_input_scale,
         input_mean=settings.model_input_mean,
+        input_std=settings.model_input_std,
         swap_rb=settings.model_swap_rb,
         softmax_mode=settings.model_output_softmax,
     )

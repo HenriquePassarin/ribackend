@@ -22,6 +22,7 @@ from app.vision.adapter import (
     build_recognizer,
     model_config_from_settings,
     parse_mean,
+    parse_triplet,
     reset_recognizer_cache,
 )
 from app.vision.opencv_classifier import OpenCvClassifierRecognizer, load_labels
@@ -106,6 +107,29 @@ def test_input_scale_and_mean_are_configurable(tmp_path: Path) -> None:
 
     blob = net.blobs[0]
     assert float(blob.max()) == pytest.approx(50.0)
+
+
+def test_input_std_normalizes_the_blob_after_scaling(tmp_path: Path) -> None:
+    """Normalização ImageNet: (pixel/255 - mean) / std."""
+    recognizer, net = make_recognizer(
+        tmp_path,
+        [1.0, 1.0, 1.0],
+        input_scale=1.0 / 255.0,
+        input_mean=(0.5, 0.5, 0.5),
+        input_std=(0.5, 0.5, 0.5),
+    )
+
+    recognizer.predict(make_png(16, 16, fill=255))
+
+    blob = net.blobs[0]
+    # (255/255 - 0.5) / 0.5 == 1.0
+    assert float(blob.min()) == pytest.approx(1.0)
+    assert float(blob.max()) == pytest.approx(1.0)
+
+
+def test_input_std_must_be_positive(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        make_recognizer(tmp_path, [1.0], input_std=(1.0, 0.0, 1.0))
 
 
 def test_logits_are_converted_to_probabilities(tmp_path: Path) -> None:
@@ -214,6 +238,12 @@ def test_invalid_mean_configuration_is_rejected(mean: str) -> None:
         build_settings(model_input_mean=mean)
 
 
+@pytest.mark.parametrize("std", ["0,0", "1,1,1,1", "a,b,c", "0,1,1", "300,1,1"])
+def test_invalid_std_configuration_is_rejected(std: str) -> None:
+    with pytest.raises(ValidationError):
+        build_settings(model_input_std=std)
+
+
 def test_mean_parsing() -> None:
     assert parse_mean("127.5, 127.5, 127.5") == (127.5, 127.5, 127.5)
 
@@ -271,6 +301,7 @@ def test_model_config_carries_the_opencv_parameters() -> None:
             model_input_size=256,
             model_input_scale=1.0,
             model_input_mean="1,2,3",
+            model_input_std="4,5,6",
             model_swap_rb=True,
             model_output_softmax="true",
         )
@@ -279,9 +310,11 @@ def test_model_config_carries_the_opencv_parameters() -> None:
     assert config.input_size == 256
     assert config.input_scale == 1.0
     assert config.input_mean == "1,2,3"
+    assert config.input_std == "4,5,6"
     assert config.swap_rb is True
     assert config.softmax_mode == "true"
     assert parse_mean(config.input_mean) == (1.0, 2.0, 3.0)
+    assert parse_triplet(config.input_std, "MODEL_INPUT_STD") == (4.0, 5.0, 6.0)
 
 
 @requires_model

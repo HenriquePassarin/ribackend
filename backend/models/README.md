@@ -20,7 +20,7 @@ O download é feito com `urllib` + verificação de hash por SSL; nenhuma creden
 | Origem | ONNX Model Zoo (`github.com/onnx/models`), MobileNetV2 |
 | Treinado em | ImageNet-1k (1000 classes, ~1,2 M imagens) |
 | SHA-256 | `c1c513582d56afceff8516c73804e484c81c6a830712ab6d682253f4a3cd042f` |
-| Entrada | 224x224x3, `[0,1]`, sem subtração de média, sem troca de canais |
+| Entrada | 224x224x3, RGB, `[0,1]`, normalizada com média `[0.485,0.456,0.406]` e desvio `[0.229,0.224,0.225]` |
 | Saída | vetor de 1000 valores (**logits**; o grafo não inclui softmax) |
 | Licença | conforme o ONNX Model Zoo (Apache-2.0 para este artefato) |
 
@@ -33,9 +33,12 @@ O download é feito com `urllib` + verificação de hash por SSL; nenhuma creden
 - As classes de fruta existentes são de espécie ou de variedade única
   (`Granny Smith`, `orange`, `lemon`, `banana`, `pineapple`, `strawberry`,
   `pomegranate`, `fig`, `jackfruit`, `custard apple`).
-- Verificação local com uma imagem por classe (sem métrica de acurácia): `banana`
-  foi classificada como `banana`; uma foto de maçã vermelha foi classificada como
-  `fig`/`Granny Smith` (não existe classe de maçã vermelha).
+- Verificação local com uma imagem por classe (sem métrica de acurácia): com a
+  normalização ImageNet (RGB + mean/std) `banana`, `lemon`, `orange`, `strawberry`
+  e `Granny Smith` foram classificadas corretamente com confiança alta; uma foto de
+  maçã vermelha foi classificada como `pomegranate` (não existe classe de maçã
+  vermelha). Sem essa normalização (BGR, sem mean/std) as mesmas fotos eram
+  classificadas errado — por isso a configuração de pré-processamento importa.
 
 Conclusão: use este modelo para validar a integração, medir latência e exercitar o
 fluxo completo. Para identificar variedades comerciais, é necessário treinar um

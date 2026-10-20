@@ -97,17 +97,13 @@ python -m pytest
 Resultado real da última execução neste ambiente (Python 3.12.3, pytest 9.1.1):
 
 ```
-collected 109 items
-109 passed, 1 warning in 7.95s
+121 passed, 1 warning in 7.28s
 ```
 
-Repetido em uma segunda `venv` limpa criada com `python -m pip install -r requirements-dev.txt`
-(inclui `opencv-python 5.0.0` e `numpy 2.5.4`): `109 passed, 1 warning in 8.16s`.
-
-Os 109 testes cobrem saúde, consulta/cadastro de frutas, upload e validação de imagens,
+Os 121 testes cobrem saúde, consulta/cadastro de frutas, upload e validação de imagens,
 política de confiança, estados de reconhecimento, confirmação/correção, configuração, o
-adaptador simulado e o adaptador OpenCV (decodificação, pré-processamento,
-logits/softmax, mapeamento de rótulos e falhas do modelo). Nenhum teste unitário depende
+adaptador simulado e o adaptador OpenCV (decodificação, pré-processamento incluindo
+escala/média/desvio, logits/softmax, mapeamento de rótulos e falhas do modelo). Nenhum teste unitário depende
 de modelo real, rede ou dataset: a inferência é substituída por uma rede falsa
 determinística e o banco é um SQLite em memória isolado por teste. Dois testes de
 integração do adaptador OpenCV rodam apenas quando o modelo está presente em `models/` e
@@ -152,8 +148,10 @@ O provedor `opencv` é a implementação de visão computacional de verdade:
 
 1. `cv2.imdecode` decodifica a imagem (um arquivo que não é imagem válida falha aqui, e
    não apenas por assinatura de bytes).
-2. `cv2.dnn.blobFromImage` faz redimensionamento, escala, média e troca de canais,
-   todos configuráveis.
+2. `cv2.dnn.blobFromImage` faz redimensionamento, escala e troca de canais; em
+   seguida o blob é normalizado por canal com `(blob - média) / desvio`. Ambos são
+   configuráveis — o MobileNetV2 do registro **exige** RGB com mean/std do ImageNet
+   (sem isso, as previsões saem erradas).
 3. `cv2.dnn.readNetFromONNX` carrega o modelo **uma vez por configuração** (cache) e
    `net.forward()` roda a inferência, com `threading.Lock` porque `cv2.dnn.Net` não é
    seguro para uso concorrente na mesma instância.
@@ -176,10 +174,16 @@ MODEL_PATH=models/mobilenetv2-7.onnx
 MODEL_LABELS_PATH=models/ilsvrc2012_labels.txt
 MODEL_INPUT_SIZE=224
 MODEL_INPUT_SCALE=0.00392156862745098
-MODEL_INPUT_MEAN=0,0,0
-MODEL_SWAP_RB=false
+MODEL_INPUT_MEAN=0.485,0.456,0.406
+MODEL_INPUT_STD=0.229,0.224,0.225
+MODEL_SWAP_RB=true
 MODEL_OUTPUT_SOFTMAX=auto
 ```
+
+> Se o seu `.env` ainda tem a configuração antiga (`MODEL_INPUT_MEAN=0,0,0`,
+> `MODEL_SWAP_RB=false` e nenhum `MODEL_INPUT_STD`), atualize para o trecho acima.
+> Sem RGB + mean/std o MobileNetV2 classifica errado (por exemplo, banana como
+> `stingray`).
 
 O vínculo com o cadastro continua por `fruit.vision_label`, que deve conter exatamente o
 rótulo da classe do modelo (por exemplo `banana`). Sem correspondência, o status é
@@ -192,9 +196,19 @@ fotos reais de frutas (imagens usadas só para verificação local e não versio
 
 | Caso | Resposta observada |
 | --- | --- |
-| Foto real de banana (fruta cadastrada com `vision_label=banana`) | `confirmation_required`, `label=banana`, `confidence=0.3484`, `fruit.code=00002` com preço vindo do cadastro |
-| Foto real de maçã vermelha (sem classe correspondente) | `no_catalog_match`, `label=fig`, `confidence=0.3243`, `fruit=null` |
+| Foto real de banana (fruta cadastrada com `vision_label=banana`) | `label=banana`, `confidence=1.0`, `fruit.code=00002` com preço vindo do cadastro |
+| Foto real de limão (fruta cadastrada com `vision_label=lemon`) | `label=lemon`, `confidence=0.9798` |
+| Foto real de laranja (fruta cadastrada com `vision_label=orange`) | `label=orange`, `confidence=0.9310` |
+| Foto real de morango (fruta cadastrada com `vision_label=strawberry`) | `label=strawberry`, `confidence=0.7825` (abaixo do limiar de exemplo: `confirmation_required`) |
+| Foto real de maçã vermelha (sem classe correspondente) | `no_catalog_match`, `label=pomegranate`, `confidence=0.9537`, `fruit=null` |
 | `README.md` enviado como `image/png` | `400 INVALID_IMAGE` |
+
+Esses números foram medidos com a normalização ImageNet habilitada
+(`MODEL_SWAP_RB=true`, `MODEL_INPUT_MEAN=0.485,0.456,0.406`,
+`MODEL_INPUT_STD=0.229,0.224,0.225`). Com o pré-processamento anterior (BGR, sem
+mean/std), as mesmas fotos saíam erradas: banana → `stingray`, limão → `picket
+fence`, laranja → `lampshade`, Granny Smith → `plate rack`. As imagens foram usadas
+apenas para verificação local e não estão versionadas.
 
 - `model_version` reportado: `mobilenetv2-7-c1c513582d56` (nome + SHA-256 do artefato), o
   que amarra cada previsão ao arquivo exato que a produziu.
@@ -210,7 +224,7 @@ O MobileNetV2 do ImageNet-1k roda e classifica espécies, mas:
 - **não distingue variedades comerciais** (Gala, Fuji, Red Delicious) — exatamente o caso
   em que códigos e preços diferem;
 - **não cobre várias frutas de hortifruti**: sem uva, manga, tomate, melão, pera ou kiwi;
-- a confiança fica baixa (~0,32–0,35 nas verificações acima) porque é um softmax sobre
+- a confiança varia bastante (de ~0,78 a 1,0 nas verificações acima): é um softmax sobre
   1000 classes de objetos, não de frutas — o que reforça a necessidade de
   `ALWAYS_REQUIRE_CONFIRMATION` e de calibrar `MIN_RECOGNITION_CONFIDENCE` com experimentos.
 
@@ -351,8 +365,9 @@ versionado). O `.env.example` documenta os valores de exemplo e não contém seg
 | `MODEL_VERSION` | vazio | Identificação livre; se vazia, é derivada do nome + SHA-256 do arquivo. |
 | `MODEL_INPUT_SIZE` | `224` | Lado da entrada quadrada do modelo. |
 | `MODEL_INPUT_SCALE` | `1/255` | `1/255` para entrada em `[0,1]`; `1.0` para entrada em `[0,255]`. |
-| `MODEL_INPUT_MEAN` | `0,0,0` | Média por canal (B,G,R) subtraída do blob. |
-| `MODEL_SWAP_RB` | `false` | Troca de canais B/R quando o modelo espera RGB. |
+| `MODEL_INPUT_MEAN` | `0,0,0` | Média por canal **aplicada depois da escala**: `(valor - média) / desvio`. Use a ordem de canais resultante de `MODEL_SWAP_RB`. |
+| `MODEL_INPUT_STD` | `1,1,1` | Desvio padrão por canal, aplicado depois da média. Para ImageNet: `0.229,0.224,0.225`. |
+| `MODEL_SWAP_RB` | `false` | Troca de canais B/R quando o modelo espera RGB (obrigatório para o MobileNetV2 do registro). |
 | `MODEL_OUTPUT_SOFTMAX` | `auto` | `auto`, `true` ou `false` para tratar a saída do modelo. |
 | `CORS_ORIGINS` | vazio | Origens separadas por vírgula; vazio desabilita CORS. |
 | `FRUITS_DEFAULT_LIMIT` / `FRUITS_MAX_LIMIT` | `20` / `100` | Paginação; `limit` maior que o máximo é reduzido. |
@@ -421,9 +436,12 @@ configuráveis ou isoladas atrás de interfaces.
   (`app/vision/opencv_classifier.py`) não conhece o modelo: recebe `MODEL_PATH`,
   `MODEL_LABELS_PATH` e os parâmetros de pré-processamento. Essa escolha permite trocar de
   modelo (inclusive um treinado no dataset do mercado) sem alterar rotas, serviços ou
-  testes. O modelo carregado é cacheado por configuração e serializado por `Lock`.
-  `MODEL_OUTPUT_SOFTMAX=auto` trata modelos que devolvem logits (caso dos artefatos da ONNX
-  Model Zoo) sem exigir que o operador saiba disso.
+  testes. O pré-processamento escala o blob e depois aplica `(valor - média) / desvio` por
+  canal, na ordem de canais resultante de `MODEL_SWAP_RB`; a configuração do MobileNetV2 do
+  registro exige RGB e mean/std do ImageNet. O modelo carregado é cacheado por
+  configuração e serializado por `Lock`. `MODEL_OUTPUT_SOFTMAX=auto` trata modelos que
+  devolvem logits (caso dos artefatos da ONNX Model Zoo) sem exigir que o operador saiba
+  disso.
 - **D14 — Modelo de referência: MobileNetV2 (ImageNet-1k) apenas para integração.**
   Escolhido por ser um ONNX público pequeno (~14 MB), com SHA-256 verificável, que roda em
   CPU no `cv2.dnn` e cobre algumas espécies de fruta. Foi **rejeitado como solução final**
@@ -533,7 +551,7 @@ backend/
 ├── scripts/
 │   ├── fetch_model.py               # baixa/verifica modelo ONNX (SHA-256)
 │   └── seed_dev_data.py             # dados de exemplo FICTÍCIOS
-├── tests/                           # 109 testes (pytest)
+├── tests/                           # 121 testes (pytest)
 ├── .env.example  .gitignore  pyproject.toml
 ├── requirements.txt  requirements-dev.txt
 └── README.md
@@ -556,8 +574,8 @@ backend/
 | Código e preço vêm do cadastro | Resposta de reconhecimento replica o cadastro; teste garante que a confirmação não altera cadastro/preço. |
 | Erros padronizados | Formato único `{"error": {...}}` e testes de ausência de stack trace. |
 | Configurações externas | `Settings` por variáveis de ambiente, validado na inicialização. |
-| Testes automatizados críticos passam | `79 passed` (também em `venv` limpa criada de `requirements-dev.txt`). |
+| Testes automatizados críticos passam | `121 passed` (Python 3.12.3, `requirements-dev.txt`). |
 | README com instalação, configuração, execução e testes | Este documento, com comandos executados neste ambiente. |
 | Stub não confundido com reconhecimento real | Versão `development-stub-v0`, `is_simulated=True`, aviso no log de inicialização e em cada inferência, e bloqueio em `APP_ENV=production`. |
-| Inferência real executando | Verificado por HTTP com `VISION_PROVIDER=opencv`: modelo ONNX no `cv2.dnn`, foto real de banana → `banana` (0,3484) mapeada para o cadastro; maçã vermelha → `no_catalog_match` com `fruit: null`; latência medida. |
+| Inferência real executando | Verificado por HTTP com `VISION_PROVIDER=opencv` e normalização ImageNet: modelo ONNX no `cv2.dnn`, foto real de banana → `banana` (1,0) mapeada para o cadastro; limão → `lemon` (0,9798); laranja → `orange` (0,9310); maçã vermelha → `no_catalog_match` com `fruit: null`; latência medida. |
 | Acurácia/adequação do modelo para o mercado | **Pendente e não afirmada**: exige dataset rotulado e treinamento; o modelo de referência não distingue variedades comerciais (ver "Próximos passos" e `models/README.md`). |

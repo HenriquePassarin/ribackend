@@ -4,8 +4,8 @@ Executa um classificador de imagens em formato ONNX com três etapas:
 
 1. Decodificação real da imagem com ``cv2.imdecode`` (um arquivo que não é imagem
    válida falha aqui, e não apenas por assinatura de bytes).
-2. Pré-processamento com ``cv2.dnn.blobFromImage`` (redimensionamento, escala,
-   média e troca de canais configuráveis).
+2. Pré-processamento com ``cv2.dnn.blobFromImage`` (redimensionamento, escala e
+   troca de canais) seguido de normalização ``(blob - mean) / std`` por canal.
 3. Inferência com ``cv2.dnn`` e conversão da saída em probabilidades.
 
 O adaptador é agnóstico ao modelo: qualquer classificador ONNX de uma única
@@ -76,6 +76,7 @@ class OpenCvClassifierRecognizer:
         input_size: int = 224,
         input_scale: float = 1.0 / 255.0,
         input_mean: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        input_std: tuple[float, float, float] = (1.0, 1.0, 1.0),
         swap_rb: bool = False,
         softmax_mode: str = "auto",
         model_version: str | None = None,
@@ -83,6 +84,8 @@ class OpenCvClassifierRecognizer:
     ) -> None:
         if softmax_mode not in SOFTMAX_MODES:
             raise ValueError(f"modo de softmax inválido: {softmax_mode!r}; use {SOFTMAX_MODES}")
+        if any(float(value) <= 0.0 for value in input_std):
+            raise ValueError("input_std deve conter três valores maiores que zero")
 
         self._labels = load_labels(labels_path)
         factory = net_factory or cv2.dnn.readNetFromONNX
@@ -100,6 +103,7 @@ class OpenCvClassifierRecognizer:
         self._input_size = input_size
         self._input_scale = input_scale
         self._input_mean = tuple(float(value) for value in input_mean)
+        self._input_std = tuple(float(value) for value in input_std)
         self._swap_rb = swap_rb
         self._softmax_mode = softmax_mode
         self._lock = threading.Lock()
@@ -148,14 +152,28 @@ class OpenCvClassifierRecognizer:
         return image
 
     def _preprocess(self, image: np.ndarray) -> Any:
-        return cv2.dnn.blobFromImage(
+        """Redimensiona, escala, troca canais e normaliza o blob.
+
+        A média e o desvio padrão são aplicados **depois** da escala, na ordem de
+        canais resultante de ``swap_rb`` (por exemplo, RGB quando ``swap_rb=True``).
+        Isso permite expressar a normalização do ImageNet diretamente:
+        escala ``1/255``, média ``0.485,0.456,0.406`` e desvio
+        ``0.229,0.224,0.225``. Com média zero e desvio um, o resultado é idêntico
+        ao de apenas escalar a imagem.
+        """
+        blob = cv2.dnn.blobFromImage(
             image,
             scalefactor=self._input_scale,
             size=(self._input_size, self._input_size),
-            mean=self._input_mean,
+            mean=(0.0, 0.0, 0.0),
             swapRB=self._swap_rb,
             crop=False,
         )
+        if self._input_mean != (0.0, 0.0, 0.0) or self._input_std != (1.0, 1.0, 1.0):
+            mean = np.asarray(self._input_mean, dtype=np.float32).reshape(1, 3, 1, 1)
+            std = np.asarray(self._input_std, dtype=np.float32).reshape(1, 3, 1, 1)
+            blob = (blob - mean) / std
+        return blob
 
     def _probabilities(self, outputs: np.ndarray) -> np.ndarray:
         if self._softmax_mode == "true":

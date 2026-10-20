@@ -18,6 +18,13 @@ VisionProvider = Literal["opencv", "stub", "disabled"]
 SoftmaxMode = Literal["auto", "true", "false"]
 
 
+def _parse_triplet(value: str, variable: str) -> tuple[float, float, float]:
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 3:
+        raise ValueError(f"{variable} deve conter três valores separados por vírgula")
+    return (float(parts[0]), float(parts[1]), float(parts[2]))
+
+
 class Settings(BaseSettings):
     """Configurações da aplicação, validadas na inicialização."""
 
@@ -66,8 +73,10 @@ class Settings(BaseSettings):
     model_input_size: int = Field(default=224, ge=32, le=1024)
     # 1/255 para modelos que esperam entrada em [0,1]; 1.0 para entrada em [0,255].
     model_input_scale: float = Field(default=1.0 / 255.0, gt=0.0, le=255.0)
-    # Média por canal (B,G,R) aplicada ao blob de entrada.
+    # Normalização aplicada ao blob já escalado: (blob - mean) / std, por canal.
+    # Os valores usam a ordem de canais resultante de MODEL_SWAP_RB.
     model_input_mean: str = "0,0,0"
+    model_input_std: str = "1,1,1"
     model_swap_rb: bool = False
     # auto: aplica softmax quando a saída não parece uma distribuição de probabilidades.
     model_output_softmax: SoftmaxMode = "auto"
@@ -100,19 +109,26 @@ class Settings(BaseSettings):
     @field_validator("model_input_mean")
     @classmethod
     def _validate_mean(cls, value: str) -> str:
-        parts = [part.strip() for part in value.split(",")]
-        if len(parts) != 3:
-            raise ValueError("deve conter três valores separados por vírgula, por exemplo: 0,0,0")
-        for part in parts:
-            number = float(part)  # levanta ValueError se não for numérico
+        for number in _parse_triplet(value, "MODEL_INPUT_MEAN"):
             if not 0.0 <= number <= 255.0:
                 raise ValueError("cada valor de MODEL_INPUT_MEAN deve estar entre 0 e 255")
         return value
 
+    @field_validator("model_input_std")
+    @classmethod
+    def _validate_std(cls, value: str) -> str:
+        for number in _parse_triplet(value, "MODEL_INPUT_STD"):
+            if not 0.0 < number <= 255.0:
+                raise ValueError("cada valor de MODEL_INPUT_STD deve ser maior que zero")
+        return value
+
     @property
     def model_input_mean_tuple(self) -> tuple[float, float, float]:
-        parts = [float(part.strip()) for part in self.model_input_mean.split(",")]
-        return (parts[0], parts[1], parts[2])
+        return _parse_triplet(self.model_input_mean, "MODEL_INPUT_MEAN")
+
+    @property
+    def model_input_std_tuple(self) -> tuple[float, float, float]:
+        return _parse_triplet(self.model_input_std, "MODEL_INPUT_STD")
 
     @model_validator(mode="after")
     def _validate_consistency(self) -> "Settings":
