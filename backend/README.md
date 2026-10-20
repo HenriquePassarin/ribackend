@@ -234,9 +234,135 @@ incluindo o uso do Fruits-360 como ponto de partida público e a verificação d
 autorização). Exportar para ONNX e registrar URL + SHA-256 é suficiente para o adaptador
 funcionar: nenhum código precisa mudar para trocar de modelo.
 
-**Nenhuma métrica de acurácia, precisão, recall ou matriz de confusão é apresentada**, e
-não há dataset embarcado neste repositório. As verificações acima são apenas checagens de
-integração (poucas imagens), não avaliação de qualidade.
+**As verificações acima são apenas checagens de integração** (poucas imagens), não
+avaliação de qualidade do MobileNetV2/ImageNet. Um dataset público foi preparado e uma
+**baseline de classificação** foi treinada nele; as métricas dessa baseline estão na
+seção seguinte e valem para os recortes do dataset, não para o balcão real.
+
+## Dataset de frutas (Roboflow)
+
+Dataset escolhido: **Fruits by YOLO** (`fruitsdetection/fruits-by-yolo`, versão 1),
+licença **CC BY 4.0** (crédito ao autor no Roboflow Universe). São 2.974 imagens em
+640×640 (2.697 treino / 187 validação / 90 teste), com augmentação de flip
+horizontal/vertical, rotação, shear e blur.
+
+Classes (9): `Apple`, `Banana`, `Grapes`, `Kiwi`, `Mango`, `Orange`, `Pineapple`,
+`Sugerapple` (grafia do dataset para *sugar apple*), `Watermelon`.
+
+O que a inspeção do arquivo baixado revelou:
+
+- as anotações são **polígonos** (segmentação), embora a página do Universe anuncie
+  “Object Detection”; 7 linhas vieram no formato de caixa e foram convertidas para
+  retângulos, porque rótulos de segmentação não aceitam caixas misturadas;
+- 8 imagens não têm nenhuma anotação (fundo) e são mantidas como negativas;
+- o `data.yaml` original referencia `../train/images`, que não resolve com o YAML na
+  raiz; o script normaliza para `train/images`, `valid/images` e `test/images`.
+
+Preparar o dataset (não treina):
+
+```bash
+cd backend
+python scripts/prepare_dataset.py --zip "<caminho>/Fruits by YOLO.v1-fruits-detection.yolo26.zip"
+```
+
+O resultado fica em `datasets/fruits-by-yolo-v1/` (ignorado pelo git): `data.yaml`
+normalizado, `classes.txt` e `dataset_report.json` com contagens por split e por classe.
+
+Números da última execução: **2.974 imagens, 6.362 polígonos**, sem problemas de
+integridade (imagem sem rótulo, rótulo órfão, classe inválida ou coordenada fora de
+`[0,1]`). Distribuição por classe:
+
+| Classe | Instâncias |
+| --- | ---: |
+| Orange | 990 |
+| Watermelon | 890 |
+| Sugerapple | 828 |
+| Kiwi | 815 |
+| Mango | 762 |
+| Banana | 637 |
+| Apple | 547 |
+| Grapes | 527 |
+| Pineapple | 366 |
+
+Treinar depois (opcional; exige `ultralytics`, que não é dependência padrão):
+
+```bash
+python -m pip install ultralytics
+python scripts/train_yolo.py --epochs 50 --export-onnx
+```
+
+O script treina segmentação (`yolo11n-seg.pt`) e, com `--export-onnx`, exporta o melhor
+peso. Esse treino de detecção **não foi executado** (em CPU seriam horas por dezenas de
+épocas). Além disso, um ONNX de segmentação/detecção **não** é compatível com o
+adaptador atual, que espera um classificador de classe única — usá-lo na API exige um
+adaptador de detecção (pegar a detecção de maior confiança e mapear a classe para
+`vision_label`).
+
+### Baseline treinada (classificador)
+
+Para medir o quanto o dataset ajuda de fato, foi treinada uma baseline de
+**classificação** sobre recortes das anotações (uma fruta por recorte), que já é
+compatível com o adaptador atual:
+
+1. `scripts/prepare_classifier_crops.py` gera 6.362 recortes (margem de 12%) em
+   `datasets/fruits-by-yolo-v1-crops/` — 5.753 treino / 394 validação / 215 teste.
+2. `scripts/train_classifier.py --freeze-backbone` ajusta só a cabeça de um
+   MobileNetV2 pré-treinado no ImageNet, por 6 épocas em CPU (~5 min/época).
+3. `scripts/export_classifier_onnx.py` exporta
+   `models/fruits-mobilenetv2-baseline.onnx` (8,9 MB, SHA-256
+   `bad1e539e91c98b40835edcaf103a5acd1e8f1d3c0d814f4aa2af316f6ce2886`).
+
+Resultado no split de **teste** (215 recortes, nunca usados em treino/validação):
+
+| Métrica | Valor |
+| --- | ---: |
+| Acurácia | **96,74%** |
+| F1 macro (8 classes com suporte) | **0,9514** |
+| F1 ponderado | 0,9711 |
+
+| Classe | Precisão | Recall | F1 | Suporte |
+| --- | ---: | ---: | ---: | ---: |
+| Apple | 1,000 | 0,909 | 0,952 | 11 |
+| Banana | 1,000 | 0,980 | 0,990 | 50 |
+| Grapes | 1,000 | 1,000 | 1,000 | 17 |
+| Kiwi | 1,000 | 1,000 | 1,000 | 28 |
+| Mango | 0,588 | 1,000 | 0,741 | 10 |
+| Orange | 1,000 | 0,924 | 0,961 | 53 |
+| Pineapple | 1,000 | 1,000 | 1,000 | 30 |
+| Sugerapple | — | — | — | 0 |
+| Watermelon | 1,000 | 0,938 | 0,968 | 16 |
+
+O único defeito visível é o excesso de Mango: 7 recortes de outras frutas foram
+classificados como Mango (daí precisão 0,588). `Sugerapple` não tem nenhum recorte no
+teste, então não entra no macro.
+
+Verificação de integração: o ONNX carregado pelo `cv2.dnn` reproduziu a mesma acurácia
+do PyTorch (96,74%), com 21,5 ms por inferência (CPU) e concordância de 98,1% entre os
+dois. Na API real, um recorte de banana retornou `label=Banana`, confiança 0,9979,
+`status=recognized` e a fruta cadastrada; um recorte de melancia (sem cadastro) retornou
+`no_catalog_match`.
+
+Pré-requisitos para reproduzir: `pip install torch torchvision onnx` (não são
+dependências da API) e os passos acima. Para usar a baseline, aponte o `.env`:
+
+```ini
+MODEL_PATH=models/fruits-mobilenetv2-baseline.onnx
+MODEL_LABELS_PATH=models/fruits-mobilenetv2-baseline.labels.txt
+MODEL_INPUT_SIZE=224
+MODEL_INPUT_SCALE=0.00392156862745098
+MODEL_INPUT_MEAN=0.485,0.456,0.406
+MODEL_INPUT_STD=0.229,0.224,0.225
+MODEL_SWAP_RB=true
+MODEL_OUTPUT_SOFTMAX=true
+```
+
+Depois reinicie o `uvicorn` e cadastre as frutas com `vision_label` igual ao rótulo do
+modelo (`Banana`, `Orange`, ...), não aos nomes do ImageNet.
+
+**Limites desta baseline:** treinada com backbone congelado sobre recortes com 12% de
+margem em torno da anotação (não na foto inteira do caixa); os 96,74% valem para esse
+split, não para o balcão real; não distingue variedades comerciais; e o teste não tem
+`Sugerapple`.
 
 ## Endpoints
 
@@ -474,12 +600,15 @@ inventada foi assumida como fato.
 
 ## Limitações conhecidas
 
-- **Nenhum dataset de avaliação.** Existe integração real com OpenCV/ONNX, mas nenhum
-  modelo foi treinado nem avaliado; portanto não há métrica de acurácia, precisão, recall
-  ou matriz de confusão para relatar.
-- **Sem treinamento.** `scripts/fetch_model.py` apenas baixa artefatos publicados com
-  verificação de hash; não há código de treino, dataset ou conversão de modelos neste
-  repositório.
+- **Baseline avaliada apenas em recortes do dataset.** A acurácia de 96,74% e o F1
+  macro de 0,9514 valem para o split de teste do Fruits by YOLO v1 (recortes com 12% de
+  margem), não para fotos do balcão real nem para variedades comerciais. O treino do
+  detector YOLO não foi executado.
+- **Treino fora do fluxo da aplicação.** `scripts/fetch_model.py` só baixa artefatos
+  publicados; `prepare_dataset.py`, `prepare_classifier_crops.py`,
+  `train_classifier.py`, `export_classifier_onnx.py` e `train_yolo.py` são ferramentas
+  manuais e exigem `torch`/`onnx` ou `ultralytics` instalados à parte — nada disso é
+  usado pela API em execução.
 - **Modelo de referência limitado**: ImageNet-1k só cobre algumas espécies de fruta e não
   distingue variedades (ver seção do OpenCV).
 - **Inferência serializada por processo** no modo `opencv` (`threading.Lock` sobre a mesma
@@ -548,8 +677,11 @@ backend/
 │   ├── services/{fruit_service,recognition_service}.py
 │   └── vision/{base,adapter,development_stub,opencv_classifier}.py
 ├── models/README.md                 # registro do modelo; binários não versionados
+├── datasets/                        # dataset YOLO preparado (ignorado pelo git)
 ├── scripts/
 │   ├── fetch_model.py               # baixa/verifica modelo ONNX (SHA-256)
+│   ├── prepare_dataset.py           # extrai/valida dataset YOLO do Roboflow
+│   ├── train_yolo.py                # treina/exporta ONNX (requer ultralytics)
 │   └── seed_dev_data.py             # dados de exemplo FICTÍCIOS
 ├── tests/                           # 121 testes (pytest)
 ├── .env.example  .gitignore  pyproject.toml

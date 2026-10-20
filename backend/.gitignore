@@ -31,6 +31,10 @@ uploads/
 data/images/
 tmp-samples/
 
+# Datasets e artefatos de treino (não versionados; ver README)
+datasets/
+runs/
+
 # Artefatos de modelo baixados (registry e instruções ficam em models/README.md)
 models/*
 !models/README.md

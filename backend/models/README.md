@@ -44,6 +44,35 @@ Conclusão: use este modelo para validar a integração, medir latência e exerc
 fluxo completo. Para identificar variedades comerciais, é necessário treinar um
 classificador em um dataset de frutas rotulado para o seu contexto.
 
+## Baseline treinada neste projeto (9 frutas)
+
+| Item | Valor |
+| --- | --- |
+| Nome | `fruits-mobilenetv2-baseline.onnx` |
+| Rótulos | `fruits-mobilenetv2-baseline.labels.txt` (`Apple`, `Banana`, `Grapes`, `Kiwi`, `Mango`, `Orange`, `Pineapple`, `Sugerapple`, `Watermelon`) |
+| Origem | MobileNetV2 pré-treinado no ImageNet; cabeça re-treinada em recortes do **Fruits by YOLO v1** (Roboflow, CC BY 4.0) |
+| Treino | 5.753 recortes; validação 394; teste 215 |
+| SHA-256 | `bad1e539e91c98b40835edcaf103a5acd1e8f1d3c0d814f4aa2af316f6ce2886` |
+| Entrada | 224x224x3, RGB, `[0,1]`, média `[0.485,0.456,0.406]` e desvio `[0.229,0.224,0.225]` |
+| Saída | vetor de 9 valores (**logits**; sem softmax no grafo) |
+| Acurácia (teste) | 96,74% |
+| F1 macro | 0,9514 (8 classes; `Sugerapple` não tem amostra de teste) |
+| Latência | 21,5 ms por inferência (`cv2.dnn`, CPU, 224x224) |
+
+Treinada com o backbone congelado por 6 épocas (CPU, ~5 min/época). Métricas
+completas e matriz de confusão em `runs/classifier/baseline-mobilenetv2/metrics.json`
+(não versionado). Reprodução:
+
+```bash
+python scripts/prepare_classifier_crops.py
+python scripts/train_classifier.py --freeze-backbone --epochs 6
+python scripts/export_classifier_onnx.py
+```
+
+**Limites:** os números valem para os recortes do dataset, não para fotos do balcão;
+não distingue variedades comerciais; `Mango` concentra os falsos positivos (precisão
+0,588) e `Sugerapple` não foi testada.
+
 ## Caminho recomendado para variedades comerciais
 
 1. Reunir imagens autorizadas das frutas e variedades **reais do mercado**, com as
@@ -61,4 +90,6 @@ classificador em um dataset de frutas rotulado para o seu contexto.
 5. Medir precisão/recall/F1 por classe, matriz de confusão, taxa de não
    reconhecimento e latência, e só então calibrar `MIN_RECOGNITION_CONFIDENCE`.
 
-Nenhum dataset, treinamento ou métrica é distribuído neste repositório.
+O dataset preparado e os binários (checkpoint e ONNX) **não são versionados**; ficam em
+`datasets/`, `runs/` e `models/`. As métricas da baseline estão documentadas no
+`README.md`; o treino é reproduzível pelos scripts citados acima.
